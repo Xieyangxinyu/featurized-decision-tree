@@ -14,17 +14,21 @@ path <- "mi"
 ################################################ AUC: python ################################################ 
 col_names <- c("data", "n", "dim", "rep", "path", "c", "FDT", "FDT_cat", "Extra", "RF", "RFNN",
                "lengthscale", "tst_mse_FDT", "tst_mse_Extra", "tst_mse_RF", "tst_mse_RFNN")
-path_name <- paste0("/Users/wdeng/Desktop/FDT/results/20220518/wo_int/", path, "/results.csv")
+path_name <- paste0("/Users/wdeng/Desktop/FDT/results/20220716/wo_int/", path, "/results.csv")
 file <- read.csv(path_name, header = TRUE)
+path_name_nn <- paste0("/Users/wdeng/Desktop/FDT/results/20220716/wo_int/", path, "/results_nn.csv")
+file_nn <- read.csv(path_name_nn, header = FALSE)
+names(file_nn) <- c("data", "n", "dim", "rep", "path", "NN", "tst_mse_NN")
 # names(file) <- col_names 
+file <- merge(file, file_nn)
 file <- na.omit(file)
 file <- filter(file, data %in% c("linear", "rbf", "matern32", "complex"))
-file_auc <- file[, c(1:4, 7:11)]
+file_auc <- file[, c(1:4, 7:11, 17)]
 file_auc$RFNN <- as.numeric(file_auc$RFNN)
-tmp <- summarise_at(group_by(file_auc, data, n, dim), vars(FDT, FDT_cat, Extra, RF, RFNN), 
+tmp <- summarise_at(group_by(file_auc, data, n, dim), vars(FDT, FDT_cat, Extra, RF, RFNN, NN), 
                     list(~mean(., na.rm = TRUE)))
 tmp1 <- melt(tmp, id.vars = c("data", "n", "dim"), variable.name = "method", value.name = "auc") 
-tmp <- summarise_at(group_by(file_auc, data, n, dim), vars(FDT, FDT_cat, Extra, RF, RFNN), 
+tmp <- summarise_at(group_by(file_auc, data, n, dim), vars(FDT, FDT_cat, Extra, RF, RFNN, NN), 
                     list(~sd(., na.rm = TRUE)))
 tmp2 <- melt(tmp, id.vars = c("data", "n", "dim"), variable.name = "method", value.name = "sd")
 file0 <- merge(tmp1, tmp2)
@@ -33,15 +37,16 @@ fdt_file <- file0
 fdt_file <- filter(fdt_file, dim %in% c(25, 50, 100))
 
 
-file_mse <- file[, c(1:4, 13:16)]
+file_mse <- file[, c(1:4, 13:16, 18)]
 file_mse$tst_mse_RFNN <- as.numeric(file_mse$tst_mse_RFNN)
 file_mse$tst_mse_RF <- as.numeric(file_mse$tst_mse_RF)
+file_mse$tst_mse_NN <- as.numeric(file_mse$tst_mse_NN)
 tmp <- summarise_at(group_by(file_mse, data, n, dim), 
-                    vars(tst_mse_FDT, tst_mse_Extra, tst_mse_RF, tst_mse_RFNN), 
+                    vars(tst_mse_FDT, tst_mse_Extra, tst_mse_RF, tst_mse_RFNN, tst_mse_NN), 
                     list(~mean(., na.rm = TRUE)))
 tmp1 <- melt(tmp, id.vars = c("data", "n", "dim"), variable.name = "method", value.name = "tst_mse")
 tmp <- summarise_at(group_by(file_mse, data, n, dim), 
-                    vars(tst_mse_FDT, tst_mse_Extra, tst_mse_RF, tst_mse_RFNN), 
+                    vars(tst_mse_FDT, tst_mse_Extra, tst_mse_RF, tst_mse_RFNN, tst_mse_NN), 
                     list(~sd(., na.rm = TRUE)))
 tmp2 <- melt(tmp, id.vars = c("data", "n", "dim"), variable.name = "method", value.name = "sd")
 
@@ -51,6 +56,7 @@ file0_mse[file0_mse$method == "tst_mse_FDT", "method"] <- "FDT"
 file0_mse[file0_mse$method == "tst_mse_Extra", "method"] <- "Extra"
 file0_mse[file0_mse$method == "tst_mse_RF", "method"] <- "RF"
 file0_mse[file0_mse$method == "tst_mse_RFNN", "method"] <- "RFNN"
+file0_mse[file0_mse$method == "tst_mse_NN", "method"] <- "NN"
 fdt_file_mse <- file0_mse
 fdt_file_mse <- filter(fdt_file_mse, dim %in% c(25, 50, 100))
 
@@ -69,7 +75,7 @@ file0$dim <- factor(file0$dim, order = T, levels = c(25, 50, 100))
 
 # without MARS
 ################################################ AUC: R_methods ################################################ 
-path_name <- paste0("/Users/wdeng/Desktop/FDT/results/20220518/wo_int/", path, "/sim_auc_", path, ".txt")
+path_name <- paste0("/Users/wdeng/Desktop/FDT/results/20220716/wo_int/", path, "/sim_auc_", path, ".txt")
 file <- read.table(path_name, fill = TRUE)
 names(file) <- c("data", "n", "dim", "rep", "Knockoff", "BNN", "BKMR", 
                  "BART", "GAM", "MARS", "BAKR", "BRR", "BL")
@@ -99,7 +105,7 @@ R_methods <- file0
 
 ################################################ AUC: all ################################################ 
 ## gradient estimates
-fdt_method <- filter(fdt_file, method %in% c("FDT", "Extra", "RFNN"))
+fdt_method <- filter(fdt_file, method %in% c("FDT", "Extra", "RFNN", "NN"))
 fdt_method[fdt_method$method == "Extra", "method"] <- "RF"
 file_all <- rbind(fdt_method, R_methods)
 file_all$method <- as.character(file_all$method)
@@ -109,7 +115,7 @@ main_grad <- rbind(main_grad, tmp)
 
 file <- file_all
 file <- filter(file, method %in% c("FDT", "RFNN", "RF", "Knockoff", "BKMR", "BART", 
-                                   "GAM", "BAKR", "BRR", "BL"))
+                                   "GAM", "BAKR", "BRR", "BL", "NN"))
 file$data <- factor(file$data, order = T, levels = c("linear", "rbf", "matern32", "complex"))
 
 file[file$method == "FDT", "method"] <- "RF-FDT (Ours)"
@@ -117,15 +123,16 @@ file[file$method == "RF", "method"] <- "RF-Impurity"
 file[file$method == "BART", "method"] <- "BART"
 file[file$method == "Knockoff", "method"] <- "RF-KnockOff"
 file[file$method == "RFNN", "method"] <- "RFNN (Ours)"
+file[file$method == "NN", "method"] <- "NN (Ours)" 
 file[file$method == "GAM", "method"] <- "GAM (Ours)"
-file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "RFNN (Ours)", 
-                                                         "RF-Impurity", "BKMR", "BART", "BAKR", 
-                                                         "RF-KnockOff",  "GAM (Ours)", "BRR", "BL"))
+file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "NN (Ours)", "GAM (Ours)", 
+                                                         "RF-Impurity", "RFNN (Ours)", "BRR", "RF-KnockOff", 
+                                                         "BKMR", "BL", "BART", "BAKR"))
 p1 <- ggplot(data = file, aes(x = n, y = auc, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   geom_line() + facet_grid(dim ~ data) + labs(x = "n", y = 'AUROC') + 
   geom_point(size = .5) + theme_set(theme_bw()) + ylim(0, 1) + 
   theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15),
@@ -137,7 +144,7 @@ ggsave(paste0("/Users/wdeng/Desktop/wo_int/", path, "_auc_grad.pdf"), width = 9,
 
 
 ## contrast for categorical covariates
-fdt_method <- filter(fdt_file, method %in% c("FDT_cat", "Extra", "RFNN"))
+fdt_method <- filter(fdt_file, method %in% c("FDT_cat", "Extra", "RFNN", "NN"))
 fdt_method[fdt_method$method == "Extra", "method"] <- "RF"
 file_all <- rbind(fdt_method, R_methods)
 file_all$method <- as.character(file_all$method)
@@ -148,23 +155,23 @@ main_cst <- rbind(main_cst, tmp)
 file <- file_all
 file[file$method == "FDT_cat", "method"] <- "FDT"
 file <- filter(file, method %in% c("FDT", "RFNN", "RF", "Knockoff", "BKMR", "BART", 
-                                   "GAM", "BAKR", "BRR", "BL"))
+                                   "GAM", "BAKR", "BRR", "BL", "NN"))
 file$data <- factor(file$data, order = T, levels = c("linear", "rbf", "matern32", "complex"))
 file[file$method == "FDT", "method"] <- "RF-FDT (Ours)"
 file[file$method == "RF", "method"] <- "RF-Impurity"
 file[file$method == "BART", "method"] <- "BART"
 file[file$method == "Knockoff", "method"] <- "RF-KnockOff"
 file[file$method == "RFNN", "method"] <- "RFNN (Ours)"
+file[file$method == "NN", "method"] <- "NN (Ours)"
 file[file$method == "GAM", "method"] <- "GAM (Ours)"
-file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "RFNN (Ours)", 
-                                                         "RF-Impurity", "BKMR", "BART", "BAKR", 
-                                                         "RF-KnockOff",  "GAM (Ours)", "BRR", "BL"))
-
+file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "NN (Ours)", "GAM (Ours)", 
+                                                         "RF-Impurity", "RFNN (Ours)", "BRR", "RF-KnockOff", 
+                                                         "BKMR", "BL", "BART", "BAKR"))
 p2 <- ggplot(data = file, aes(x = n, y = auc, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   geom_line() + facet_grid(dim ~ data) + labs(x = "n", y = 'AUROC') + 
   geom_point(size = .5) + theme_set(theme_bw()) + ylim(0, 1) + 
   theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15),
@@ -178,7 +185,7 @@ ggsave(paste0("/Users/wdeng/Desktop/wo_int/", path, "_auc_cst.pdf"), width = 9, 
 
 
 ################################################ TST_MSE: all ################################################ 
-path_name <- paste0("/Users/wdeng/Desktop/FDT/results/20220518/wo_int/", path, "/sim_mse_", path, ".txt")
+path_name <- paste0("/Users/wdeng/Desktop/FDT/results/20220716/wo_int/", path, "/sim_mse_", path, ".txt")
 file <- read.table(path_name, fill = TRUE)
 names(file) <- c("data", "n", "dim", "rep", "BKMR", "MARS", "BART", "GAM", "BAKR", "BRR", "BL")
 file <- filter(file, rep %in% 0:19)
@@ -207,13 +214,18 @@ file <- file_all
 file$data <- factor(file$data, order = T, levels = c("linear", "rbf", "matern32", "complex"))
 
 file <- filter(file, method %in% c("Extra", "RFNN", "BKMR", "BART",
-                                   "GAM", "BAKR", "BRR", "BL"))
+                                   "GAM", "BAKR", "BRR", "BL", "NN"))
 file[file$method == "Extra", "method"] <- "FDT"
 
 tmp <- filter(file, (data == "matern32") & (dim == 100))
 tmp$data <- ifelse(path == "cat", "mixture", ifelse(path == "cont", "continuous", path))
 main_mse <- rbind(main_mse, tmp)
-mse_nan$data <- ifelse(path == "cat", "mixture", ifelse(path == "cont", "continuous", path))
+
+nan_n <- if (path == "heart") c(50, 100, 150, 257) else c(100, 200, 500, 1000)
+nan_data <- ifelse(path == "cat", "mixture", ifelse(path == "cont", "continuous", path))
+mse_nan <- data.frame(data = nan_data, n = rep(nan_n, 2), dim = 100, 
+                      method = rep(c("RF-Impurity", "RF-KnockOff"), each = 4), 
+                      tst_mse = NA, sd = NA)
 main_mse <- rbind(main_mse, mse_nan)
 
 file$dim <- factor(file$dim, order = T, levels = c(25, 50, 100))
@@ -223,14 +235,16 @@ file[file$method == "FDT", "method"] <- "RF-FDT (Ours)"
 file[file$method == "BART", "method"] <- "BART"
 file[file$method == "RFNN", "method"] <- "RFNN (Ours)"
 file[file$method == "GAM", "method"] <- "GAM (Ours)"
-file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "RFNN (Ours)", "BART", 
-                                                         "BKMR", "GAM (Ours)", "BAKR", "BRR", "BL"))
+file[file$method == "NN", "method"] <- "NN (Ours)"
+
+file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "NN (Ours)", "GAM (Ours)", 
+                                                         "RFNN (Ours)", "BRR", "BKMR", "BL", "BART", "BAKR"))
 
 p3 <- ggplot(data = file, aes(x = n, y = tst_mse, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "darkslateblue", "darkolivegreen3", 
-                                 "brown", "chartreuse4", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dotted", "dashed", "solid", 
-                                   "dotted", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "darkgreen", "deeppink2",        
+                                 "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "solid", "dashed", 
+                                   "dashed", "dotted", "dotted", "dotted"))+
   scale_y_continuous(trans='log10') + 
   geom_line() + facet_grid(dim ~ data) + labs(x = "n", y = 'Testing MSE') + 
   geom_point(size = .5) + theme_set(theme_bw()) + 
@@ -240,9 +254,6 @@ p3 <- ggplot(data = file, aes(x = n, y = tst_mse, color = method, linetype = met
   theme(legend.title = element_text(size = 12, face = "bold")) +
   theme(legend.text = element_text(size = 12))
 ggsave(paste0("/Users/wdeng/Desktop/wo_int/", path, "_mse.pdf"), width = 9, height = 7)
-
-
-
 
 
 ################################################ AUC: main ################################################ 
@@ -256,7 +267,6 @@ main_cst[main_cst$data == "continuous", "data"] <- "synthetic-continuous"
 main_cst[main_cst$method == "FDT_cat", "method"] <- "FDT"
 main_mse[main_mse$data == "mixture", "data"] <- "synthetic-mixture"
 main_mse[main_mse$data == "continuous", "data"] <- "synthetic-continuous"
-main_mse$n[153:160] <- rep(c(50, 100, 150, 257), 2)
 
 
 get_legend<-function(myggplot){
@@ -274,27 +284,30 @@ names(main_mse)[5] <- "value"
 file <- rbind(main_cst, main_mse)
 file$n <- as.integer(file$n)
 file <- filter(file, method %in% c("FDT", "RFNN", "RF", "Knockoff", "BKMR", "BART", 
-                                   "GAM", "BAKR", "BRR", "BL"))
+                                   "GAM", "BAKR", "BRR", "BL", "NN"))
 file[file$method == "FDT", "method"] <- "RF-FDT (Ours)"
 file[file$method == "RF", "method"] <- "RF-Impurity"
 file[file$method == "BART", "method"] <- "BART"
 file[file$method == "Knockoff", "method"] <- "RF-KnockOff"
 file[file$method == "RFNN", "method"] <- "RFNN (Ours)"
 file[file$method == "GAM", "method"] <- "GAM (Ours)"
+file[file$method == "NN", "method"] <- "NN (Ours)"
 
-file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "RFNN (Ours)", 
-                                                         "RF-Impurity", "BKMR", "BART", "BAKR", 
-                                                         "RF-KnockOff",  "GAM (Ours)", "BRR", "BL"))
+
+file$method <- factor(file$method, order = T, levels = c("RF-FDT (Ours)", "NN (Ours)", "GAM (Ours)", 
+                                                         "RF-Impurity", "RFNN (Ours)", "BRR", "RF-KnockOff", 
+                                                         "BKMR", "BL", "BART", "BAKR"))
 
 file$data <- factor(file$data, order = T, levels = c("synthetic-mixture", "synthetic-continuous", 
                                                      "adult", "heart", "mi"))
 
-fdt0 <- ggplot(filter(file, (data == "synthetic-mixture") & (type == "Testing MSE")), 
+  
+fdt0 <- ggplot(filter(file, (data == "synthetic-mixture") & (type == "AUC")), 
                aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   scale_y_continuous(trans='log10') + 
   geom_line() + labs(x = "n", y = "Testing MSE") + 
   geom_point(size = .2) + theme_set(theme_bw()) + ggtitle("FDT") + 
@@ -307,10 +320,10 @@ legend <- get_legend(fdt0)
 
 q1 <- ggplot(filter(file, (data == "synthetic-mixture") & (type == "Testing MSE")), 
                aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "darkgreen", "deeppink2",        
+                                 "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "solid", "dashed", 
+                                   "dashed", "dotted", "dotted", "dotted"))+
   ylim(0, 3) + 
   geom_line() + labs(x = "n", y = "Testing MSE") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
@@ -318,10 +331,10 @@ q1 <- ggplot(filter(file, (data == "synthetic-mixture") & (type == "Testing MSE"
 
 q2 <- ggplot(filter(file, (data == "synthetic-continuous") & (type == "Testing MSE")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "darkgreen", "deeppink2",        
+                                 "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "solid", "dashed", 
+                                   "dashed", "dotted", "dotted", "dotted"))+
   ylim(0, 3) + 
   geom_line() + labs(x = "n", y = "Testing MSE") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
@@ -330,10 +343,10 @@ q2 <- ggplot(filter(file, (data == "synthetic-continuous") & (type == "Testing M
 
 q3 <- ggplot(filter(file, (data == "adult") & (type == "Testing MSE")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "darkgreen", "deeppink2",        
+                                 "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "solid", "dashed", 
+                                   "dashed", "dotted", "dotted", "dotted"))+
   ylim(0, 3) + 
   geom_line() + labs(x = "n", y = "Testing MSE") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
@@ -342,10 +355,10 @@ q3 <- ggplot(filter(file, (data == "adult") & (type == "Testing MSE")),
 
 q4 <- ggplot(filter(file, (data == "heart") & (type == "Testing MSE")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "darkgreen", "deeppink2",        
+                                 "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "solid", "dashed", 
+                                   "dashed", "dotted", "dotted", "dotted"))+
   ylim(0, 3) + 
   geom_line() + labs(x = "n", y = "Testing MSE") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
@@ -354,10 +367,10 @@ q4 <- ggplot(filter(file, (data == "heart") & (type == "Testing MSE")),
 
 q5 <- ggplot(filter(file, (data == "mi") & (type == "Testing MSE")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "darkgreen", "deeppink2",        
+                                 "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "solid", "dashed", 
+                                   "dashed", "dotted", "dotted", "dotted"))+
   ylim(0, 3) + 
   geom_line() + labs(x = "n", y = "Testing MSE") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
@@ -366,10 +379,10 @@ q5 <- ggplot(filter(file, (data == "mi") & (type == "Testing MSE")),
 
 q6 <- ggplot(filter(file, (data == "synthetic-mixture") & (type == "AUC")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   geom_line() + labs(x = "n", y = "AUROC") + ggtitle("synthetic-mixture") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
   theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
@@ -378,10 +391,10 @@ q6 <- ggplot(filter(file, (data == "synthetic-mixture") & (type == "AUC")),
 
 q7 <- ggplot(filter(file, (data == "synthetic-continuous") & (type == "AUC")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   geom_line() + labs(x = "n", y = "AUROC") + ggtitle("synthetic-continuous") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
   theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
@@ -390,10 +403,10 @@ q7 <- ggplot(filter(file, (data == "synthetic-continuous") & (type == "AUC")),
 
 q8 <- ggplot(filter(file, (data == "adult") & (type == "AUC")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   geom_line() + labs(x = "n", y = "AUROC") + ggtitle("adult") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
   theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
@@ -402,10 +415,10 @@ q8 <- ggplot(filter(file, (data == "adult") & (type == "AUC")),
 
 q9 <- ggplot(filter(file, (data == "heart") & (type == "AUC")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   geom_line() + labs(x = "n", y = "AUROC") + ggtitle("heart") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
   theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
@@ -413,10 +426,10 @@ q9 <- ggplot(filter(file, (data == "heart") & (type == "AUC")),
 
 q10 <- ggplot(filter(file, (data == "mi") & (type == "AUC")), 
              aes(x = n, y = value, color = method, linetype = method))+ 
-  scale_colour_manual(values = c("purple", "darkgreen", "blue", "darkolivegreen3", "darkslateblue", 
-                                 "chartreuse4", "skyblue", "brown", "deeppink2", "brown1")) + 
-  scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed", "dotted", 
-                                   "dotted", "dotdash", "solid", "dashed", "dotted"))+
+  scale_colour_manual(values = c("purple", "orange", "brown", "blue", "darkgreen", "deeppink2",        
+                                 "skyblue", "darkolivegreen3", "brown1", "darkslateblue", "chartreuse4")) + 
+  scale_linetype_manual(values = c("solid", "solid", "solid", "dashed", "solid", "dashed", 
+                                   "dotdash", "dashed", "dotted", "dotted", "dotted"))+
   geom_line() + labs(x = "n", y = "AUROC") + ggtitle("mi") + 
   geom_point(size = .2) + theme_set(theme_bw()) + 
   theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +

@@ -574,3 +574,4 @@ if __name__ == '__main__':
 #     gradient = layer2@W1.T
 #     psi = np.mean(gradient ** 2, 0)
 #     return psi
+
