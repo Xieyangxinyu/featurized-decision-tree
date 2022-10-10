@@ -10,13 +10,21 @@ from sklearn.ensemble import ExtraTreesRegressor
 import jax
 import jax.numpy as jnp
 from jax import jit
-import tensorflow as tf
+# from jax.interpreters import xla
 import numpy as np
 import csv
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import average_precision_score
 from sklearn.preprocessing import OneHotEncoder
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
 import matplotlib.pyplot as plt
 import kernelized as kernel_layers
+
+
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -47,8 +55,157 @@ def main(args=None):
     if not os.path.exists(args.dir_out):
         os.makedirs(args.dir_out)
 
+    def calculate_f1(true, pred):
+        f1_lst = []
+        for l in range(pred.__len__()):
+            f1_lst.append(f1_score(true, pred >= pred[l]))
+        f1_lst.append(f1_score(true, pred >= (np.max(pred) + 1)))
+        return np.max(f1_lst)
+
+    # @title prepare_training_data
+    def prepare_training_data(data, n_obs):
+        df_train = data.head(n_obs)
+        df_test = data.tail(40)
+
+        x_train, y_train, f_train = df_train, df_train.pop("y"), df_train.pop("f")
+        x_test, y_test, f_test = df_test, df_test.pop("y"), df_test.pop("f")
+
+        x_train = x_train.to_numpy()
+        x_test = x_test.to_numpy()
+
+        y_train = y_train.to_numpy().reshape(-1, 1).ravel()
+        y_test = y_test.to_numpy().reshape(-1, 1).ravel()
+        return x_train, y_train, x_test, y_test
+
+    def estimate_psi_NN(X, W1, W2, b1, sig2=0.01, n_samp=100, batch_size=100):
+        """Calculate psi.
+
+        Args:
+            X: (np array) n x d input matrix.
+            W1: (np array) d x K matrix indicating the weight matrix of the first layer.
+            W2: (np array) K x 1 matrix indicating the weight matrix of the second layer.
+            b1: (np array) vector of length K indicating the intercepts of the  first layer.
+
+        Returns:
+            psi: (np array) vector of length d indicating the estimated variable importance.
+        """
+        if X.ndim == 1:
+            X = X[None, :]
+        layer1 = X @ W1 + b1
+        phi = layer1 * (layer1 > 0)
+        phi_batches = split_into_batches(phi, batch_size)
+        num_batch = phi_batches.__len__()
+        weight_cov_val = np.float64(compute_inverse(phi_batches[0], sig_sq=sig2))
+
+        for batch_id in range(1, num_batch):
+            H_inv = weight_cov_val
+            phi_batch = phi_batches[batch_id]
+            weight_cov_val = minibatch_woodbury_update(phi_batch, H_inv)
+        Sigma_beta = weight_cov_val * sig2
+
+        try:
+            beta_samp = np.random.multivariate_normal(W2[:, 0], Sigma_beta, size=n_samp)
+        except:
+            beta_samp = np.random.multivariate_normal(W2[:, 0], np.diag(np.diag(Sigma_beta)),
+                                                      size=n_samp)  # (n_samp, D)
+
+        drelu = (X @ W1 + b1 > 0).astype(float)
+        layer2_samp = np.multiply(drelu[:, :, None], beta_samp.T)
+        layer2 = np.mean(layer2_samp, axis=2)
+        gradient = layer2 @ W1.T
+        psi = np.mean(gradient ** 2, 0)
+        return psi[None, :]
+
+    # @title MetricsCallback
+    class MetricsCallback(tf.keras.callbacks.Callback):
+        def __init__(self, x_train, x_test, y_test, outlier_mse_cutoff=[10, 50, 100], sig2=0.01):
+            super().__init__()
+
+            self.history = {'psi_auroc': [], 'psi_auprc': []}
+            self.history.update({f'y_mse_{thresh}': [] for thresh in outlier_mse_cutoff})
+            self.x_train = x_train
+            self.x_test = x_test
+            self.y_test = y_test
+            self.outlier_mse_cutoff = outlier_mse_cutoff
+            self.sig2 = sig2
+            self.psi_true = np.concatenate((np.repeat(1, 5), np.repeat(0, args.dim_in - 5)))
+
+        def compute_psi_auc(self, n_samp=100, batch_size=100):
+            W1 = self.model.layers[1].weights[0].numpy()  # d X K
+            b1 = self.model.layers[1].bias.numpy()  # vector of length K
+            W2 = self.model.layers[2].weights[0].numpy()  # K X 1
+            psi_est = estimate_psi_NN(self.x_train, W1, W2, b1, sig2=self.sig2,
+                                      n_samp=n_samp, batch_size=batch_size).flatten()
+            auroc = roc_auc_score(self.psi_true, psi_est)
+            auprc = average_precision_score(self.psi_true, psi_est)
+            return auroc, auprc
+
+        def compute_y_mse(self, outlier_mse_cutoff):
+            y_est = self.model.predict(self.x_test, verbose=0).flatten()
+            mse = (self.y_test - y_est) ** 2
+            # Remove outlier MSEs.
+            mse = mse[mse < outlier_mse_cutoff]
+            return np.mean(mse)
+
+        def on_epoch_end(self, epoch, logs=None):
+            auroc, auprc = self.compute_psi_auc()
+
+            for thresh in self.outlier_mse_cutoff:
+                self.history[f'y_mse_{thresh}'].append(self.compute_y_mse(thresh))
+
+            self.history['psi_auroc'].append(auroc)
+            self.history['psi_auprc'].append(auprc)
+
+    # @title OutlierRobustMSE
+    class OutlierRobustMSE(tf.keras.metrics.Metric):
+        def __init__(self, outlier_mse_cutoff=10., name='robust_mse', **kwargs):
+            name = name + '_' + str(outlier_mse_cutoff)
+            super().__init__(name=name, **kwargs)
+            self.outlier_mse_cutoff = outlier_mse_cutoff
+            self.mse = tf.keras.metrics.Mean()
+
+        def update_state(self, y_true, y_pred, sample_weight):
+            batch_mse = tf.math.square(y_true - y_pred)
+            not_outlier = tf.less(batch_mse, self.outlier_mse_cutoff)
+
+            batch_mse = tf.boolean_mask(batch_mse, not_outlier)
+
+            self.mse.update_state(values=batch_mse, sample_weight=sample_weight)
+
+        def result(self):
+            return self.mse.result()
+
+        def reset_state(self):
+            self.mse.reset_state()
+
+    # @title get_compiled_model
+    def get_compiled_model(dim_in, dim_hidden=1024, seed=0, lr=1e-3,
+                           l1=1e-2, l2=1e-2, outlier_mse_cutoff=[10.]):
+        inputs = keras.Input(shape=(dim_in,), name="input")
+        x = layers.Dense(dim_hidden,
+                         kernel_initializer=keras.initializers.RandomNormal(seed=seed),
+                         bias_initializer=keras.initializers.RandomUniform(seed=seed),
+                         kernel_regularizer=keras.regularizers.L1L2(l1=l1, l2=l2),
+                         bias_regularizer=keras.regularizers.L1L2(l1=l1, l2=l2),
+                         activation="relu",
+                         name="hidden")(inputs)
+        outputs = layers.Dense(1, name="output")(x)
+
+        model = keras.Model(inputs=inputs, outputs=outputs)
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=lr),
+            loss=keras.losses.MeanSquaredError(),
+            metrics=[
+                OutlierRobustMSE(outlier_mse_cutoff=cutoff)
+                for cutoff in outlier_mse_cutoff],
+        )
+        return model
+
     def split_into_batches(X, batch_size):
         return [X[i:i + batch_size] for i in range(0, len(X), batch_size)]
+
+    def split_into_betas(betas_set, batch_size):
+        return [betas_set[:, i:i + batch_size, :] for i in range(0, betas_set.shape[1], batch_size)]
 
     def compute_inverse(X, sig_sq=1.):
         return np.linalg.inv(np.matmul(X.T, X) + sig_sq * np.identity(X.shape[1]))
@@ -208,7 +365,7 @@ def main(args=None):
 
             return pred_mean.reshape((-1, 1)), pred_cov
 
-        def estimate_psi(self, X, compute_cov=False, n_samp=1000):
+        def estimate_psi(self, X, compute_cov=True, n_samp=100):
             nD_mat = np.sin(np.matmul(X, self.RFNN_weight) + self.RFNN_bias)
             n, d = X.shape
             D = self.RFNN_weight.shape[1]
@@ -250,101 +407,20 @@ def main(args=None):
             return psi_mean, psi_var
 
 
-    # def plot_slice(x, y, quantile=.5, dim=0, ax=None, fix_x=0):
-    #     '''
-    #
-    #     x: (N,D) training inputs
-    #     y: (N,1) or (N,) training outputs
-    #     quantile: Quantile of fixed x variables to use in plot
-    #     dim: dimension of x to plot on x-axis
-    #
-    #     Everything should be numpy
-    #     '''
-    #
-    #     if ax is None:
-    #         fig, ax = plt.subplots()
-    #
-    #     # x-axis
-    #     midx = (x[:, dim].min() + x[:, dim].max()) / 2
-    #     dx = x[:, dim].max() - x[:, dim].min()
-    #     x_plot = np.linspace(midx - .75 * dx, midx + .75 * dx, x.shape[0])
-    #
-    #     x_plot_all = np.quantile(x, q=quantile, axis=0)*np.ones((x_plot.shape[0], x.shape[1])) # use quantile
-    #     # x_plot_all = np.zeros((x_plot.shape[0], x.shape[1]))  # use zeros
-    #     x_plot_all[:, dim] = x_plot
-    #
-    #     # plot
-    #     if fix_x == 0:
-    #         color = "blue"
-    #         label = "X1=0, X2=0"
-    #         x_plot_all[:, 0] = 0
-    #         x_plot_all[:, 1] = 0
-    #     elif fix_x == 1:
-    #         color = "green"
-    #         label = "X1=1, X2=0"
-    #         x_plot_all[:, 0] = 1
-    #         x_plot_all[:, 1] = 0
-    #     elif fix_x == 2:
-    #         color = "purple"
-    #         label = "X1=0, X2=1"
-    #         x_plot_all[:, 0] = 0
-    #         x_plot_all[:, 1] = 1
-    #     else:
-    #         color = "red"
-    #         label = "X1=1, X2=1"
-    #         x_plot_all[:, 0] = 1
-    #         x_plot_all[:, 1] = 1
-    #
-    #     # sample from model
-    #     f_samp_plot = np.array(f(x_plot_all, map_matrix_set, feature_set, threshold_set, beta_set)).T
-    #
-    #     ax.scatter(x[:, dim], y, color=color)  # training data
-    #     ax.plot(x_plot, np.mean(f_samp_plot, 0), color=color, label=label)  # posterior mean
-    #     for q in [.025, .05, .1]:
-    #         ci = np.quantile(f_samp_plot, [q, 1 - q], axis=0)
-    #         ax.fill_between(x_plot_all[:, dim].reshape(-1), ci[0, :], ci[1, :], alpha=.1, color=color)
-    #
-    # def plot_slices_5(x_all, y_all, quantile=.5, figsize=(4, 4)):
-    #     dim_in = 3
-    #     fig, ax = plt.subplots(4, dim_in, figsize=figsize, sharex=True, sharey=True)
-    #
-    #     # fig.suptitle("1d slices")
-    #     for fix_x in range(4):
-    #         for dim in range(2, 5):
-    #             ax_dim = ax[fix_x, dim - 2] if dim_in > 1 else ax
-    #             plot_slice(x_all[fix_x], y_all[fix_x].ravel(), quantile=quantile, dim=dim, ax=ax_dim, fix_x=fix_x)
-    #             if fix_x == 3:
-    #                 ax_dim.set_xlabel("x" + str(dim + 1))
-    #         ax[fix_x, 2].legend(loc="upper right")
-    #
-    #     fig.text(0.06, 0.5, "y", va="center", rotation="vertical")
-    #
-    #     return fig, ax
-
-
-
     ## allocate space for results
     res = {}
 
     # --------- Load data -----------
-    data = pd.read_csv(os.path.join("/n/home10/irisdeng/FDT/python/experiments/expr/datasets", args.path,
+    data = pd.read_csv(os.path.join("featurized-decision-tree/python/experiments/expr/datasets", args.path,
                                     "{data}_n{n}_d{d}_i{i}.csv".format(data=args.dataset,
                                                                        n=args.n_obs, d=args.dim_in,
                                                                        i=args.rep)), index_col=0)
-    df_train = data.head(args.n_obs)
-    df_test = data.tail(40)
+    x_train, y_train, x_test, y_test = prepare_training_data(data, args.n_obs)
 
-    x_train, y_train, f_train = df_train, df_train.pop("y"), df_train.pop("f")
-    x_test, y_test, f_test = df_test, df_test.pop("y"), df_test.pop("f")
-
-    x_train = x_train.to_numpy()
-    x_test = x_test.to_numpy()
-
-    y_train = y_train.to_numpy().reshape(-1, 1).ravel()
-    y_test = y_test.to_numpy().reshape(-1, 1).ravel()
 
     # --------- Train model -----------
     true = np.concatenate((np.repeat(1, 5), np.repeat(0, args.dim_in - 5)))
+    n_samp = 100
     max_leaf_nodes = 2**(int(np.log2(np.sqrt(args.n_obs) * np.log(args.n_obs))) + 1)
 
     c_lst = [0.1, 1.0]
@@ -354,6 +430,7 @@ def main(args=None):
         rf_raw = RandomForestRegressor(n_estimators=50, max_leaf_nodes=max_leaf_nodes, random_state=0).fit(x_train,
                                                                                                            y_train)
         beta_set = np.zeros((extra.n_estimators, max_leaf_nodes))
+        betas_set = np.zeros((extra.n_estimators, n_samp, max_leaf_nodes))
         map_matrix_set = np.zeros((extra.n_estimators, 2 * (max_leaf_nodes - 1), max_leaf_nodes))
         feature_set = np.zeros((extra.n_estimators, max_leaf_nodes - 1))
         threshold_set = np.zeros((extra.n_estimators, max_leaf_nodes - 1))
@@ -366,9 +443,17 @@ def main(args=None):
             map_matrix_set[j, :, :] = fdt.map_matrix
             feature_set[j, :] = fdt.hidden_features
             threshold_set[j, :] = fdt.hidden_threshold
+            try:
+                beta_samp = np.random.multivariate_normal(fdt.beta, fdt.Sigma_beta, size=n_samp)
+            except:
+                beta_samp = np.random.multivariate_normal(fdt.beta,
+                                                          np.diag(np.diag(fdt.Sigma_beta)),
+                                                          size=n_samp)  # (n_samp, D)
+            betas_set[j, :, :] = beta_samp
         # res['runtime_train'] = time.time() - start_time
 
         beta_set = jnp.asarray(beta_set)
+        betas_set = jnp.asarray(betas_set)
         map_matrix_set = jnp.asarray(map_matrix_set)
         feature_set = jnp.asarray(feature_set, dtype=int)
         threshold_set = jnp.asarray(threshold_set)
@@ -387,23 +472,34 @@ def main(args=None):
         f = jax.jit(jax.vmap(jax.vmap(predict, in_axes=(None, 0, 0, 0, 0), out_axes=0),
                              in_axes=(0, None, None, None, None), out_axes=0))
 
-        grad_f = jax.jit(jax.vmap(jax.vmap(jax.grad(predict, argnums=0),
-                                           in_axes=(None, 0, 0, 0, 0), out_axes=0),
-                                  in_axes=(0, None, None, None, None), out_axes=0))
+        grad_fs = jax.jit(jax.vmap(jax.vmap(jax.vmap(jax.grad(predict, argnums=0),
+                                                     in_axes=(None, 0, 0, 0, 0), out_axes=0),
+                                            in_axes=(0, None, None, None, None), out_axes=0),
+                                   in_axes=(None, None, None, None, 1), out_axes=0))
 
-        batch_size = 100
-        if x_train.shape[0] > batch_size:
-            X_batches = split_into_batches(x_train, batch_size=batch_size)
-            psi_est_all = np.array(grad_f(X_batches[0], map_matrix_set, feature_set, threshold_set, beta_set))
-            for batch_id in range(1, X_batches.__len__()):
-                X_batch = X_batches[batch_id]
-                psi_est_tmp = np.array(grad_f(X_batch, map_matrix_set, feature_set, threshold_set, beta_set))
-                psi_est_all = np.concatenate([psi_est_all, psi_est_tmp], axis=0)
-        else:
-            psi_est_all = np.array(grad_f(x_train, map_matrix_set, feature_set, threshold_set, beta_set))
+        batch_beta = 20
+        batch_samp = 20
+        batch_tree = 20
+        beta_batches = split_into_betas(betas_set, batch_size=batch_beta)
+        X_batches = split_into_batches(x_train, batch_size=batch_samp)
+        map_matrix_batches = split_into_batches(map_matrix_set, batch_size=batch_tree)
+        feature_batches = split_into_batches(feature_set, batch_size=batch_tree)
+        threshold_batches = split_into_batches(threshold_set, batch_size=batch_tree)
 
-        grad_train = np.mean(psi_est_all ** 2, axis=0)
-        psi_est = np.median(grad_train, axis=0)
+        psi_beta = []
+        for beta_id in range(beta_batches.__len__()):
+            psi_samp = []
+            beta_tree_batches = split_into_batches(beta_batches[beta_id], batch_size=batch_tree)
+            for batch_id in range(X_batches.__len__()):
+                psi_tree = []
+                for tree_id in range(feature_batches.__len__()):
+                    psi_tmp = np.array(
+                        grad_fs(X_batches[batch_id], map_matrix_batches[tree_id], feature_batches[tree_id],
+                                threshold_batches[tree_id], beta_tree_batches[tree_id]))
+                    psi_tree.append(psi_tmp ** 2)
+                psi_samp.append(np.median(np.concatenate(psi_tree, axis=2), axis=2))
+            psi_beta.append(np.mean(np.concatenate(psi_samp, axis=1), axis=1))
+        psi_est = np.mean(np.concatenate(psi_beta, axis=0), axis=0)
 
         psi_est_cat = np.copy(psi_est)
         x1_1 = np.concatenate([np.ones(x_train.shape[0]).reshape((-1, 1)), x_train[:, 1:]], axis=1)
@@ -451,81 +547,20 @@ def main(args=None):
         roc_fdt_cat = roc_auc_score(true, psi_est_cat)
         roc_extra = roc_auc_score(true, extra.feature_importances_)
         roc_rf_raw = roc_auc_score(true, rf_raw.feature_importances_)
+        res["f1_fdt_c{c}".format(c=c)] = calculate_f1(true, psi_est)
+        res["f1_fdt_cat_c{c}".format(c=c)] = calculate_f1(true, psi_est_cat)
         res["roc_fdt_c{c}".format(c=c)] = roc_fdt
         res["roc_fdt_cat_c{c}".format(c=c)] = roc_fdt_cat
 
 
 
     # --------- Store results -----------
+    res["f1_extra"] = calculate_f1(true, extra.feature_importances_)
+    res["f1_rf_raw"] = calculate_f1(true, rf_raw.feature_importances_)
     res['roc_extra'] = roc_extra
     res['roc_rf_raw'] = roc_rf_raw
 
-
-    # categorical interacts with continuous
-    # x_all =[]
-    # y_all = []
-    # x1 = np.copy(x_train)
-    # x1 = x1[(x1[:, 0] == 0) & (x1[:, 1] == 0), :]
-    # n_size = np.min([x1.shape[0], 50])
-    # x1 = x1[np.random.choice(x1.shape[0], size=n_size, replace=False), :]
-    # y1_all = np.array(f(x1, map_matrix_set, feature_set, threshold_set, beta_set))
-    # y11 = np.mean(y1_all, axis=1).reshape(-1, 1)
-    # x_all.append(x1)
-    # y_all.append(y11)
-    #
-    # x1 = np.copy(x_train)
-    # x1 = x1[(x1[:, 0] == 1) & (x1[:, 1] == 0), :]
-    # n_size = np.min([x1.shape[0], 50])
-    # x1 = x1[np.random.choice(x1.shape[0], size=n_size, replace=False), :]
-    # y1_all = np.array(f(x1, map_matrix_set, feature_set, threshold_set, beta_set))
-    # y10 = np.mean(y1_all, axis=1).reshape(-1, 1)
-    # x_all.append(x1)
-    # y_all.append(y10)
-    #
-    # x1 = np.copy(x_train)
-    # x1 = x1[(x1[:, 0] == 0) & (x1[:, 1] == 1), :]
-    # n_size = np.min([x1.shape[0], 50])
-    # x1 = x1[np.random.choice(x1.shape[0], size=n_size, replace=False), :]
-    # y1_all = np.array(f(x1, map_matrix_set, feature_set, threshold_set, beta_set))
-    # y21 = np.mean(y1_all, axis=1).reshape(-1, 1)
-    # x_all.append(x1)
-    # y_all.append(y21)
-    #
-    # x1 = np.copy(x_train)
-    # x1 = x1[(x1[:, 0] == 1) & (x1[:, 1] == 1), :]
-    # n_size = np.min([x1.shape[0], 50])
-    # x1 = x1[np.random.choice(x1.shape[0], size=n_size, replace=False), :]
-    # y1_all = np.array(f(x1, map_matrix_set, feature_set, threshold_set, beta_set))
-    # y20 = np.mean(y1_all, axis=1).reshape(-1, 1)
-    # x_all.append(x1)
-    # y_all.append(y20)
-    #
-    # fig, ax = plot_slices_5(x_all, y_all, quantile=.5, figsize=(10, 12))
-    # fig.savefig(os.path.join("/n/home10/irisdeng/FDT/python/experiments/expr/results", args.path,
-    #                          "slices_post/{name}_n{n}_d{dim_in}_rep{rep}_c{c}.png".format(name=args.dataset,
-    #                                                                                       n=args.n_obs,
-    #                                                                                       dim_in=args.dim_in,
-    #                                                                                       rep=args.rep,
-    #                                                                                       c=c)))
-    #
-    # plt.close('all')
-    #
-    # # uncertainty quantification of variable importance, continuous data
-    # fig2, ax2 = plt.subplots()
-    # ax2.set_title("{name}_n{n}_d{dim_in}".format(name=args.dataset, dim_in=args.dim_in, n=args.n_obs))
-    # ax2.plot(np.arange(1, args.dim_in + 1), psi_est, color='blue')  # posterior mean
-    # q = 0.05
-    # ci = np.quantile(grad_train, [q, 1 - q], axis=0)
-    # ax2.fill_between(np.arange(1, args.dim_in + 1), ci[0, :], ci[1, :], alpha=.1, color='blue')
-    # fig2.savefig(os.path.join("/n/home10/irisdeng/FDT/python/experiments/expr/results", args.path,
-    #                           "uq_vi/{name}_n{n}_d{dim_in}_rep{rep}_c{c}.png".format(name=args.dataset,
-    #                                                                                  n=args.n_obs,
-    #                                                                                  dim_in=args.dim_in,
-    #                                                                                  rep=args.rep,
-    #                                                                                  c=c)))
-    # plt.close('all')
-
-    # RFNN
+    # RFF
     n_rfnn = int(np.sqrt(args.n_obs) * np.log(args.n_obs)) + 1
     pred_mse_rfnn = []
     l_lst = [5.0, 10.0, 16.0, 23.0]
@@ -540,38 +575,74 @@ def main(args=None):
     m.train()
     psi_rfnn = m.estimate_psi(x_train)[0]
     est_ind = psi_rfnn / np.amax(psi_rfnn)
+    res["f1_rfnn"] = calculate_f1(true, est_ind)
     res['roc_rfnn'] = roc_auc_score(true, est_ind)
 
     pred = m.predict(x_test)[0]
     tst_mse_rfnn = np.mean((y_test - pred) ** 2)
+
+    # NN
+    # Execute model run
+    lr = 1e-3  # @param
+    l1 = 1e2  # @param
+    l2 = 1e2
+    dim_hidden = 512  # @param
+    outlier_mse_cutoff = [10, 50, 100]
+
+    for i in range(10):
+        model_nn = get_compiled_model(dim_in=args.dim_in, dim_hidden=dim_hidden,
+                                      seed=i, lr=lr, l1=l1, l2=l2,
+                                      outlier_mse_cutoff=outlier_mse_cutoff)
+
+        # Define callbacks.
+        early_stop_callback = keras.callbacks.EarlyStopping(
+            monitor="val_robust_mse_50", min_delta=1e-6, patience=25, verbose=0)
+        metrics_callback = MetricsCallback(x_train=x_train,
+                                           x_test=x_test,
+                                           y_test=y_test,
+                                           outlier_mse_cutoff=outlier_mse_cutoff)
+
+        model_nn.fit(x_train, y_train,
+                     batch_size=64, epochs=500,
+                     validation_data=(x_test, y_test),
+                     callbacks=[early_stop_callback, metrics_callback],
+                     verbose=0)
+
+        # Decide best epoch by RMSE / AUC.
+        mse_10_history = metrics_callback.history['y_mse_10']
+        mse_50_history = metrics_callback.history['y_mse_50']
+        mse_100_history = metrics_callback.history['y_mse_100']
+
+        auroc_history = metrics_callback.history['psi_auroc']
+
+        best_epoch_auroc = np.argmax(auroc_history)
+
+        best_mse_10_by_auroc = mse_10_history[best_epoch_auroc]
+        best_mse_50_by_auroc = mse_50_history[best_epoch_auroc]
+        best_mse_100_by_auroc = mse_100_history[best_epoch_auroc]
+        best_auroc_by_auroc = auroc_history[best_epoch_auroc]
+
+        var_auroc_list.append(best_auroc_by_auroc)
+        pred_mse_10_list.append(best_mse_10_by_auroc)
+        pred_mse_50_list.append(best_mse_50_by_auroc)
+        pred_mse_100_list.append(best_mse_100_by_auroc)
+
+    res["f1_nn"] = var_f1_lst[np.argsort(pred_mse_lst)[len(pred_mse_lst) // 2]]
+    res['roc_nn'] = var_auc_lst[np.argsort(pred_mse_lst)[len(pred_mse_lst) // 2]]
+    res["f1_nn_best"] = var_f1_lst[np.argmin(pred_mse_lst)]
+    res['roc_nn_best'] = var_auc_lst[np.argmin(pred_mse_lst)]
+
     res['lengthscale'] = l
     res['tst_mse_fdt'] = tst_mse_fdt
     res['tst_mse_extra'] = tst_mse_extra
     res['tst_mse_raw'] = tst_mse_raw
     res['tst_mse_rfnn'] = tst_mse_rfnn
+    res['tst_mse_nn'] = np.median(pred_mse_lst)
+    res['tst_mse_nn_best'] = np.min(pred_mse_lst)
     return res
 
 if __name__ == '__main__':
     main()
 
 
-# def estimate_psi(X, W1, W2, b1):
-#     """Calculate psi.
-#
-#     Args:
-#         X: (np array) n x d input matrix.
-#         W1: (np array) d x K matrix indicating the weight matrix of the first layer.
-#         W2: (np array) K x 1 matrix indicating the weight matrix of the second layer.
-#         b1: (np array) vector of length K indicating the intercepts of the  first layer.
-#
-#     Returns:
-#         psi: (np array) vector of length d indicating the estimated variable importance.
-#     """
-#     if X.ndim == 1:
-#         X = X[None, :]
-#     drelu = (X@W1 + b1 > 0).astype(float)
-#     layer2 = np.multiply(drelu, W2[:,0])
-#     gradient = layer2@W1.T
-#     psi = np.mean(gradient ** 2, 0)
-#     return psi
 

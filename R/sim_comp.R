@@ -1,4 +1,4 @@
-setwd('/n/home10/irisdeng/FDT/R')
+setwd('featurized-decision-tree/R')
 ### Clear Environment ### 
 rm(list = ls(all = TRUE))
 

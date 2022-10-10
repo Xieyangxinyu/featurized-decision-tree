@@ -3,7 +3,7 @@ md_comp <- function(name = "linear", n = 100, dim = 25, i = 0, data_name = "cat"
   
   data_name <- as.character(data_name)
   filename <- paste0("data=", name, "_n=", n, "_dim=", dim, "_i=", i)
-  data <- read.csv(paste0("/n/home10/irisdeng/FDT/python/experiments/expr/datasets/", data_name, "/",
+  data <- read.csv(paste0("featurized-decision-tree/python/experiments/expr/datasets/", data_name, "/",
                           name, "_n", n, "_d", dim, "_i", i, ".csv"), row.names = 1)
   df_train <- data[1:n, ]
   x_train <- df_train[, -c(1, 2)]
@@ -18,19 +18,7 @@ md_comp <- function(name = "linear", n = 100, dim = 25, i = 0, data_name = "cat"
   df_test <- df_test[, -1]
   
   true <- c(rep(1, 5), rep(0, dim - 5))
-  
-  # # random forest
-  # start_time <- Sys.time()
-  # res_rf <- randomForest(y ~ ., data = df_train, importance = TRUE)
-  # end_time <- Sys.time()
-  # rf_time <- difftime(end_time, start_time, units = "secs")[[1]]
-  # pred <- predict(res_rf, x_test)
-  # rf_mse <- mean((y_test - pred) ^ 2)
-  # # rf_mse <- mean((pred - f_test)^2) / mean((f_test - mean(f_test))^2)
-  # rf_est <- res_rf$importance[, 2]
-  # rf_est <- rf_est / max(rf_est)
-  # rf_auc <- auc(roc(true, rf_est))
-  # 
+
   # knockoff
   start_time <- Sys.time()
   knock_rf <- knockoff.filter(x_train, y_train, statistic = stat.random_forest)
@@ -98,15 +86,6 @@ md_comp <- function(name = "linear", n = 100, dim = 25, i = 0, data_name = "cat"
   # bstarss
   xnam <- paste("x", 1:dim, sep="")
   fmla <- as.formula(paste("y ~ ", paste(xnam, collapse= "+")))
-  # start_time <- Sys.time()
-  # m <- spikeSlabGAM(formula = fmla, data = df_train)
-  # end_time <- Sys.time()
-  # spike_time <- difftime(end_time, start_time, units = "secs")[[1]]
-  # pred <- predict(m, newdata = x_test)
-  # spike_mse <- mean((y_test - pred) ^ 2)
-  # spike_pip <- summary(m)$trmSummary[, 2][-1]
-  # spike_pip <- spike_pip / max(spike_pip)
-  # spike_auc <- auc(roc(true, spike_pip))
   
   # gam
   if (n > dim) {
@@ -188,22 +167,6 @@ md_comp <- function(name = "linear", n = 100, dim = 25, i = 0, data_name = "cat"
   psi_brr <- brr_beta^2
   psi_brr <- psi_brr / max(psi_brr)
   brr_auc <- auc(roc(true, psi_brr))
-
-  # Bayesian LMM
-  # start_time <- Sys.time()
-  # K <- x_train %*% t(x_train)
-  # ETA <- list(list(K = K, model = "RKHS"))
-  # reg.BBLUP <- BGLR(y = y_train, ETA = ETA, nIter = mcmc.iter,
-  #                   burnIn = mcmc.burn, verbose = FALSE)
-  # reg.BBLUP_b <- ginv(x_train) %*% reg.BBLUP$ETA[[1]]$u
-  # end_time <- Sys.time()
-  # bblup_time <- difftime(end_time, start_time, units = "secs")[[1]]
-  # pred <- as.matrix(x_test) %*% reg.BBLUP_b
-  # bblup_mse <- mean((y_test - pred) ^ 2)
-  # # bblup_mse <- mean((pred - f_test)^2) / mean((f_test - mean(f_test))^2)
-  # psi_bblup <- reg.BBLUP_b^2
-  # psi_bblup <- psi_bblup / max(psi_bblup)
-  # bblup_auc <- auc(roc(true, psi_bblup[, 1]))
 
   # Bayesian lasso
   start_time <- Sys.time()
