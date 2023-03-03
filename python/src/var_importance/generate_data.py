@@ -199,6 +199,7 @@ def uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_no
     x_all = r_x.uniform(-2, 2, (n_all, dim_in))
     x_all[:, [0, 1, 5, 6]] = r_x.binomial(1, 0.5, size=n_all * 4).reshape((n_all, 4))
 
+    
     x_train = x_all[:n_train, :]
     x_test = x_all[n_train:, :]
 
@@ -455,9 +456,9 @@ for data in data_lst:
                 psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
                 psi = pd.DataFrame(psi)
                 df_total.to_csv(
-                    "featurized-decision-tree/python/experiments/expr/datasets/cat/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
+                    "./python/experiments/expr/datasets/cat/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
                 psi.to_csv(
-                    "featurized-decision-tree/python/experiments/expr/datasets/cat/psi/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
+                    "./python/experiments/expr/datasets/cat/psi/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
 
 # generate synthetic-continuous datasets
 for data in data_lst:
@@ -479,9 +480,9 @@ for data in data_lst:
                 psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
                 psi = pd.DataFrame(psi)
                 df_total.to_csv(
-                    "featurized-decision-tree/python/experiments/expr/datasets/cont/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
+                    "./python/experiments/expr/datasets/cont/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
                 psi.to_csv(
-                    "featurized-decision-tree/python/experiments/expr/datasets/cont/psi/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
+                    "./python/experiments/expr/datasets/cont/psi/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
 
 
 # adult dataset
@@ -489,9 +490,9 @@ features = ["age", "workclass", "fnlwgt", "education", "education_num", "marital
             "occupation", "relationship", "race", "sex", "capital_gain", "capital_loss",
             "hours_per_week", "native_country", "label"]
 
-original_train = pd.read_csv("featurized-decision-tree/python/experiments/simu_real/adult/adult.data", names=features,
+original_train = pd.read_csv("./python/experiments/simu_real/adult/adult.data", names=features,
                              sep=r'\s*, \s*', engine="python", na_values="?")
-original_test = pd.read_csv("featurized-decision-tree/python/experiments/simu_real/adult/adult.test", names=features,
+original_test = pd.read_csv("./python/experiments/simu_real/adult/adult.test", names=features,
                             sep=r'\s*, \s*', engine="python", na_values="?", skiprows=1)
 num_train = len(original_train)
 original = pd.concat([original_train, original_test])
@@ -560,7 +561,7 @@ plt.show()
 features = ["age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach",
             "exang", "oldpeak", "slope", "ca", "thal", "target"]
 
-original = pd.read_csv("featurized-decision-tree/python/experiments/simu_real/heart/processed.cleveland.data", names=features,
+original = pd.read_csv("./python/experiments/simu_real/heart/processed.cleveland.data", names=features,
                        sep=",", engine="python", na_values="?")
 
 # drop nan
@@ -604,11 +605,11 @@ df = feature_mat.set_axis(features, axis=1, inplace=False)
 imp = IterativeImputer(random_state=0)
 feature_mat = imp.fit_transform(df)
 feature_mat = pd.DataFrame(feature_mat, columns=features)
-feature_mat.to_csv("featurized-decision-tree/python/experiments/simu_real/mi/feature_processed.csv",
+feature_mat.to_csv("./python/experiments/simu_real/mi/feature_processed.csv",
                    columns=features, index=False)
 
 # Myocardial infarction complications Data Set with imputed values
-feature_mat = pd.read_csv("featurized-decision-tree/python/experiments/simu_real/mi/feature_processed.csv")
+feature_mat = pd.read_csv("./python/experiments/simu_real/mi/feature_processed.csv")
 feature_mat = feature_mat.iloc[:, :20]
 corrMat = feature_mat.corr().round(2)
 ax = sn.heatmap(corrMat, annot=True, cmap='rocket_r', annot_kws={'size':7})
@@ -663,5 +664,5 @@ for data in data_lst:
                 # psi = pd.DataFrame(psi)
                 print(df_total.isnull().values.any())
                 df_total.to_csv(
-                    "featurized-decision-tree/python/experiments/expr/datasets/adult/{data}_n{n}_d{d}_i{i}.csv".format(
+                    "./python/experiments/expr/datasets/adult/{data}_n{n}_d{d}_i{i}.csv".format(
                         data=data, n=n, d=dim, i=i))
