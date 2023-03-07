@@ -1,6 +1,9 @@
 # standard library imports
 import os
 import sys
+import seaborn as sn
+import matplotlib.pyplot as plt
+
 
 # package imports
 import autograd.numpy as np
@@ -192,110 +195,73 @@ class Toy(Dataset):
             self.standardized = False
 
 
-def uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1):
+def gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise):
+
+    x_train = x_all[:n_train, :]
+    x_test = x_all[n_train:, :]
+
+    assert dim_in >= 5
+
+    if version == 1:
+        f = lambda x: x[:, 0] - x[:, 1] + x[:, 2] + 0.5 * x[:, 3] + 2 * x[:, 4]
+
+    elif version == 2:
+        r_f = np.random.RandomState(seed_x)
+        # sample 5D function
+        n_obs_sample = 500
+        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
+        x0[:, [0, 1]] = r_f.binomial(1, 0.5, size=n_obs_sample * 2).reshape((n_obs_sample, 2))
+        act = lambda z: np.exp(-distance_matrix(z, x0) ** 2 / (2 * l ** 2))
+        rbf_kern = act(x0)
+        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), rbf_kern, 1).reshape(-1, 1)
+        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
+        alpha = np.linalg.inv(rbf_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
+        f = lambda z: act(z[:, :5]) @ alpha
+
+    elif version == 3:
+        r_f = np.random.RandomState(seed_x)
+        # sample 5D function
+        n_obs_sample = 500
+        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
+        x0[:, [0, 1]] = r_f.binomial(1, 0.5, size=n_obs_sample * 2).reshape((n_obs_sample, 2))
+        act = lambda z: (1 + np.sqrt(3) * distance_matrix(z, x0) / l) * np.exp(-np.sqrt(3) * distance_matrix(z, x0) / l)
+        mat32_kern = act(x0)
+        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), mat32_kern, 1).reshape(-1, 1)
+        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
+        alpha = np.linalg.inv(mat32_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
+        f = lambda z: act(z[:, :5]) @ alpha
+
+    elif version == 4:
+        f = lambda x: np.sin(np.max([x[:, 0], x[:, 1]]) + np.arctan(x[:, 1])) / (1 + x[:, 0] + x[:, 4]) + \
+                      np.sin(0.5 * x[:, 2]) * (1 + np.exp(x[:, 3] - 0.5 * x[:, 2])) + x[:, 2] ** 2 + \
+                      2 * np.sin(x[:, 3]) + 4 * x[:, 4]
+    
+    return Toy(f, x_train, x_test, noise_sig2, snr, l, seed_noise)
+
+def uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None):
     # sample x
     r_x = np.random.RandomState(seed_x)
     n_all = n_train + n_test
     x_all = r_x.uniform(-2, 2, (n_all, dim_in))
     x_all[:, [0, 1, 5, 6]] = r_x.binomial(1, 0.5, size=n_all * 4).reshape((n_all, 4))
 
-    
-    x_train = x_all[:n_train, :]
-    x_test = x_all[n_train:, :]
-
-    if version == 1:
-        assert dim_in >= 5
-        f = lambda x: x[:, 0] - x[:, 1] + x[:, 2] + 0.5 * x[:, 3] + 2 * x[:, 4]
-
-    elif version == 2:
-        assert dim_in >= 5
-        r_f = np.random.RandomState(seed_x)
-        # sample 5D function
-        n_obs_sample = 500
-        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
-        x0[:, [0, 1]] = r_f.binomial(1, 0.5, size=n_obs_sample * 2).reshape((n_obs_sample, 2))
-        act = lambda z: np.exp(-distance_matrix(z, x0) ** 2 / (2 * l ** 2))
-        rbf_kern = act(x0)
-        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), rbf_kern, 1).reshape(-1, 1)
-        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
-        alpha = np.linalg.inv(rbf_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
-        f = lambda z: act(z[:, :5]) @ alpha
-
-    elif version == 3:
-        assert dim_in >= 5
-        r_f = np.random.RandomState(seed_x)
-        # sample 5D function
-        n_obs_sample = 500
-        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
-        x0[:, [0, 1]] = r_f.binomial(1, 0.5, size=n_obs_sample * 2).reshape((n_obs_sample, 2))
-        act = lambda z: (1 + np.sqrt(3) * distance_matrix(z, x0) / l) * np.exp(-np.sqrt(3) * distance_matrix(z, x0) / l)
-        mat32_kern = act(x0)
-        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), mat32_kern, 1).reshape(-1, 1)
-        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
-        alpha = np.linalg.inv(mat32_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
-        f = lambda z: act(z[:, :5]) @ alpha
-
-    elif version == 4:
-        assert dim_in >= 5
-        f = lambda x: np.sin(np.max([x[:, 0], x[:, 1]]) + np.arctan(x[:, 1])) / (1 + x[:, 0] + x[:, 4]) + \
-                      np.sin(0.5 * x[:, 2]) * (1 + np.exp(x[:, 3] - 0.5 * x[:, 2])) + x[:, 2] ** 2 + \
-                      2 * np.sin(x[:, 3]) + 4 * x[:, 4]
-
-    return Toy(f, x_train, x_test, noise_sig2, snr, l, seed_noise)
+    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise)
 
 
 ## continuous data
-def uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1):
+def uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None):
     # sample x
     r_x = np.random.RandomState(seed_x)
     n_all = n_train + n_test
     x_all = r_x.uniform(-2, 2, (n_all, dim_in))
 
-    x_train = x_all[:n_train, :]
-    x_test = x_all[n_train:, :]
-
-    if version == 1:
-        assert dim_in >= 5
-        f = lambda x: x[:, 0] - x[:, 1] + x[:, 2] + 0.5 * x[:, 3] + 2 * x[:, 4]
-
-    elif version == 2:
-        assert dim_in >= 5
-        r_f = np.random.RandomState(seed_x)
-        # sample 5D function
-        n_obs_sample = 500
-        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
-        act = lambda z: np.exp(-distance_matrix(z, x0) ** 2 / (2 * l ** 2))
-        rbf_kern = act(x0)
-        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), rbf_kern, 1).reshape(-1, 1)
-        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
-        alpha = np.linalg.inv(rbf_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
-        f = lambda z: act(z[:, :5]) @ alpha
-
-    elif version == 3:
-        assert dim_in >= 5
-        r_f = np.random.RandomState(seed_x)
-        # sample 5D function
-        n_obs_sample = 500
-        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
-        act = lambda z: (1 + np.sqrt(3) * distance_matrix(z, x0) / l) * np.exp(-np.sqrt(3) * distance_matrix(z, x0) / l)
-        mat32_kern = act(x0)
-        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), mat32_kern, 1).reshape(-1, 1)
-        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
-        alpha = np.linalg.inv(mat32_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
-        f = lambda z: act(z[:, :5]) @ alpha
-
-    elif version == 4:
-        assert dim_in >= 5
-        f = lambda x: np.sin(np.max([x[:, 0], x[:, 1]]) + np.arctan(x[:, 1])) / (1 + x[:, 0] + x[:, 4]) + \
-                      np.sin(0.5 * x[:, 2]) * (1 + np.exp(x[:, 3] - 0.5 * x[:, 2])) + x[:, 2] ** 2 + \
-                      2 * np.sin(x[:, 3]) + 4 * x[:, 4]
-
-    return Toy(f, x_train, x_test, noise_sig2, snr, l, seed_noise)
+    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise)
 
 
 # simulation using features from real datasets
-def simu_real(base_data, dim_in, noise_sig2, snr, l, n_train, n_test=50, seed_x=0, seed_noise=0, version=1):
+def simu_real(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None):
     # sample x
+    assert base_data is not None
     dim_original = base_data.shape[1]
     r_x = np.random.RandomState(seed_x)
     n_all = n_train + n_test
@@ -303,51 +269,10 @@ def simu_real(base_data, dim_in, noise_sig2, snr, l, n_train, n_test=50, seed_x=
     x_rest = r_x.uniform(-2, 2, (n_all, dim_in - dim_original))
     x_all = np.concatenate((x_original, x_rest), axis=1)
 
-    x_train = x_all[:n_train, :]
-    x_test = x_all[n_train:, :]
-
-    if version == 1:
-        assert dim_in >= 5
-        f = lambda x: x[:, 0] - x[:, 1] + x[:, 2] + 0.5 * x[:, 3] + 2 * x[:, 4]
-
-    elif version == 2:
-        assert dim_in >= 5
-        r_f = np.random.RandomState(seed_x)
-        # sample 5D function
-        n_obs_sample = 500
-        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
-        x0[:, [0, 1]] = r_f.binomial(1, 0.5, size=n_obs_sample * 2).reshape((n_obs_sample, 2))
-        act = lambda z: np.exp(-distance_matrix(z, x0) ** 2 / (2 * l ** 2))
-        rbf_kern = act(x0)
-        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), rbf_kern, 1).reshape(-1, 1)
-        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
-        alpha = np.linalg.inv(rbf_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
-        f = lambda z: act(z[:, :5]) @ alpha
-
-    elif version == 3:
-        assert dim_in >= 5
-        r_f = np.random.RandomState(seed_x)
-        # sample 5D function
-        n_obs_sample = 500
-        x0 = r_f.uniform(-2, 2, (n_obs_sample, 5))
-        x0[:, [0, 1]] = r_f.binomial(1, 0.5, size=n_obs_sample * 2).reshape((n_obs_sample, 2))
-        act = lambda z: (1 + np.sqrt(3) * distance_matrix(z, x0) / l) * np.exp(-np.sqrt(3) * distance_matrix(z, x0) / l)
-        mat32_kern = act(x0)
-        f0 = r_f.multivariate_normal(np.zeros(n_obs_sample), mat32_kern, 1).reshape(-1, 1)
-        y0 = f0 + r_f.normal(0, np.sqrt(noise_sig2), (n_obs_sample, 1))
-        alpha = np.linalg.inv(mat32_kern + noise_sig2 * np.identity(x0.shape[0])) @ y0
-        f = lambda z: act(z[:, :5]) @ alpha
-
-    elif version == 4:
-        assert dim_in >= 5
-        f = lambda x: np.sin(np.max([x[:, 0], x[:, 1]]) + np.arctan(x[:, 1])) / (1 + x[:, 0] + x[:, 4]) + \
-                      np.sin(0.5 * x[:, 2]) * (1 + np.exp(x[:, 3] - 0.5 * x[:, 2])) + x[:, 2] ** 2 + \
-                      2 * np.sin(x[:, 3]) + 4 * x[:, 4]
-
-    return Toy(f, x_train, x_test, noise_sig2, snr, l, seed_noise)
+    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise)
 
 
-def load_dataset(name, dim_in, noise_sig2, snr, l, n_train, n_test=40, seed=0):
+def load_dataset(name, type, dim_in, noise_sig2, snr, l, n_train, n_test=40, seed=0, base_data = None):
     '''
     inputs:
 
@@ -355,72 +280,20 @@ def load_dataset(name, dim_in, noise_sig2, snr, l, n_train, n_test=40, seed=0):
     '''
 
     if name == 'linear':
-        dataset = uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=1)
+        dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
+                             version=1, base_data = base_data)
 
     elif name == 'rbf':
-        dataset = uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=2)
+        dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
+                             version=2, base_data = base_data)
 
     elif name == 'matern32':
-        dataset = uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=3)
+        dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
+                             version=3, base_data = base_data)
 
     elif name == 'complex':
-        dataset = uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=4)
-
-    return dataset
-
-
-def load_continuous_dataset(name, dim_in, noise_sig2, snr, l, n_train, n_test=40, seed=0):
-    '''
-    inputs:
-
-    returns:
-    '''
-
-    if name == 'linear':
-        dataset = uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=n_test,
-                                        seed_x=seed, seed_noise=seed, version=1)
-
-    elif name == 'rbf':
-        dataset = uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=n_test,
-                                        seed_x=seed, seed_noise=seed, version=2)
-
-    elif name == 'matern32':
-        dataset = uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=n_test,
-                                        seed_x=seed, seed_noise=seed, version=3)
-
-    elif name == 'complex':
-        dataset = uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=n_test,
-                                        seed_x=seed, seed_noise=seed, version=4)
-
-    return dataset
-
-
-def load_synthetic_dataset(base_data, name, dim_in, noise_sig2, snr, l, n_train, n_test=50, seed=0):
-    '''
-    inputs:
-
-    returns:
-    '''
-
-    if name == 'linear':
-        dataset = simu_real(base_data, dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                            version=1)
-
-    elif name == 'rbf':
-        dataset = simu_real(base_data, dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                            version=2)
-
-    elif name == 'matern32':
-        dataset = simu_real(base_data, dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                            version=3)
-
-    elif name == 'complex':
-        dataset = simu_real(base_data, dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                            version=4)
+        dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
+                             version=4, base_data = base_data)
 
     return dataset
 
@@ -434,7 +307,7 @@ for data in data_lst:
     for n in n_lst:
         for dim in dim_lst:
             for i in range(20):
-                ds = load_dataset(data, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
+                ds = load_dataset(data, uncer_quan, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
                 x_train = np.concatenate(
                     [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
                     axis=1)
@@ -465,7 +338,7 @@ for data in data_lst:
     for n in n_lst:
         for dim in dim_lst:
             for i in range(20):
-                ds = load_continuous_dataset(data, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
+                ds = load_dataset(data, uncer_quan_continuous, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
                 x = np.concatenate((ds.x_train, ds.x_test))
                 y = np.concatenate((ds.y_train, ds.y_test))
                 f = np.concatenate((ds.f_train, ds.f_test))
@@ -484,6 +357,49 @@ for data in data_lst:
                 psi.to_csv(
                     "./python/experiments/expr/datasets/cont/psi/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
 
+
+
+# generate adult, heart and mi datasets
+
+def gen_real_data(name):
+    for data in data_lst:
+        for n in n_lst:
+            for dim in dim_lst:
+                for i in range(20):
+                    ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
+                    x_train = np.concatenate(
+                        [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
+                        axis=1)
+                    x_test = np.concatenate(
+                        [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
+                        axis=1)
+                    x = np.concatenate((x_train, x_test))
+                    while np.sum(np.isnan(x)) > 0:
+                        ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
+                        x_train = np.concatenate(
+                            [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]],
+                            ds.x_train[:, 7:]], axis=1)
+                        x_test = np.concatenate(
+                            [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
+                            axis=1)
+                        x = np.concatenate((x_train, x_test))
+                    # x = np.concatenate((ds.x_train, ds.x_test))
+                    y = np.concatenate((ds.y_train, ds.y_test))
+                    f = np.concatenate((ds.f_train, ds.f_test))
+                    df = np.concatenate((f, y, x), axis=1)
+
+                    columns = ["f", "y"]
+                    for j in range(dim):
+                        columns.append("x" + str(j + 1))
+
+                    df_total = pd.DataFrame(df, columns=columns)
+                    df_total = df_total.astype(np.float32)
+                    # psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
+                    # psi = pd.DataFrame(psi)
+                    print(df_total.isnull().values.any())
+                    df_total.to_csv(
+                        "./python/experiments/expr/datasets/{name}/{data}_n{n}_d{d}_i{i}.csv".format(name=name,
+                            data=data, n=n, d=dim, i=i))
 
 # adult dataset
 features = ["age", "workclass", "fnlwgt", "education", "education_num", "marital_status",
@@ -555,7 +471,11 @@ ax.add_patch(Rectangle((0,0), 5, 5, fill=False, edgecolor='k', lw=3, clip_on=Fal
 plt.tight_layout()
 plt.show()
 
-
+data_lst = ["linear", "rbf", "matern32", "complex"]
+n_lst = [100, 200, 500, 1000]
+dim_lst = [25, 50, 100, 200]
+base_data = feature_mat.to_numpy()
+gen_real_data("adult")
 
 # heart disease data
 features = ["age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach",
@@ -579,6 +499,11 @@ ax.add_patch(Rectangle((0,0), 5, 5, fill=False, edgecolor='k', lw=3, clip_on=Fal
 plt.tight_layout()
 plt.show()
 
+n_lst = [50, 100, 150, 257]
+dim_lst = [25, 50, 100, 200]
+base_data = feature_mat.to_numpy()
+
+gen_real_data("heart")
 
 # impute missingness
 from sklearn.experimental import enable_iterative_imputer
@@ -617,52 +542,4 @@ ax.add_patch(Rectangle((0,0), 5, 5, fill=False, edgecolor='k', lw=3, clip_on=Fal
 plt.tight_layout()
 plt.show()
 
-
-# generate adult, heart and mi datasets
-# n_lst = [50, 100, 150, 257] # heart
-data_lst = ["linear", "rbf", "matern32", "complex"]
-n_lst = [100, 200, 500, 1000]
-dim_lst = [25, 50, 100, 200]
-dd = feature_mat.iloc[:, range(100)]
-base_data = dd.to_numpy()
-# base_data = feature_mat.to_numpy()
-for data in data_lst:
-    for n in n_lst:
-        for dim in dim_lst:
-            for i in range(20):
-                ds = load_synthetic_dataset(base_data, data, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n,
-                                            n_test=40, seed=i)
-                x_train = np.concatenate(
-                    [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
-                    axis=1)
-                x_test = np.concatenate(
-                    [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
-                    axis=1)
-                x = np.concatenate((x_train, x_test))
-                while np.sum(np.isnan(x)) > 0:
-                    ds = load_synthetic_dataset(base_data, data, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n,
-                                                n_test=40, seed=i)
-                    x_train = np.concatenate(
-                        [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]],
-                         ds.x_train[:, 7:]], axis=1)
-                    x_test = np.concatenate(
-                        [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
-                        axis=1)
-                    x = np.concatenate((x_train, x_test))
-                # x = np.concatenate((ds.x_train, ds.x_test))
-                y = np.concatenate((ds.y_train, ds.y_test))
-                f = np.concatenate((ds.f_train, ds.f_test))
-                df = np.concatenate((f, y, x), axis=1)
-
-                columns = ["f", "y"]
-                for j in range(dim):
-                    columns.append("x" + str(j + 1))
-
-                df_total = pd.DataFrame(df, columns=columns)
-                df_total = df_total.astype(np.float32)
-                # psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
-                # psi = pd.DataFrame(psi)
-                print(df_total.isnull().values.any())
-                df_total.to_csv(
-                    "./python/experiments/expr/datasets/adult/{data}_n{n}_d{d}_i{i}.csv".format(
-                        data=data, n=n, d=dim, i=i))
+# gen_real_data("mi")
