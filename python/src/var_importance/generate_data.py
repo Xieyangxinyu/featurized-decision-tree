@@ -1,6 +1,4 @@
 # standard library imports
-import os
-import sys
 import seaborn as sn
 import matplotlib.pyplot as plt
 
@@ -10,7 +8,7 @@ import autograd.numpy as np
 from autograd import grad
 import pandas as pd
 from sklearn import preprocessing
-from sklearn.decomposition import PCA
+from scipy.stats import special_ortho_group
 
 
 def distance_matrix(A, B, squared=False):
@@ -196,6 +194,10 @@ class Toy(Dataset):
 
 
 def gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise):
+    
+    # rotate x_all
+    r_mat = special_ortho_group.rvs(dim_in)
+    x_all = np.matmul(x_all, r_mat) 
 
     x_train = x_all[:n_train, :]
     x_test = x_all[n_train:, :]
@@ -299,107 +301,70 @@ def load_dataset(name, type, dim_in, noise_sig2, snr, l, n_train, n_test=40, see
 
 
 data_lst = ["linear", "rbf", "matern32", "complex"]
-n_lst = [100, 200, 500, 1000]
-dim_lst = [25, 50, 100, 200]
+#n_lst = [100, 200, 500, 1000]
+#dim_lst = [25, 50, 100, 200]
 
-# generate synthetic-mixture datasets
-for data in data_lst:
-    for n in n_lst:
-        for dim in dim_lst:
-            for i in range(20):
-                ds = load_dataset(data, uncer_quan, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
-                x_train = np.concatenate(
-                    [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
-                    axis=1)
-                x_test = np.concatenate(
-                    [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
-                    axis=1)
-                x = np.concatenate((x_train, x_test))
-                # x = np.concatenate((ds.x_train, ds.x_test))
-                y = np.concatenate((ds.y_train, ds.y_test))
-                f = np.concatenate((ds.f_train, ds.f_test))
-                df = np.concatenate((f, y, x), axis=1)
+n_lst = [200, 500]
+dim_lst = [25]
 
-                columns = ["f", "y"]
-                for j in range(dim):
-                    columns.append("x" + str(j + 1))
-
-                df_total = pd.DataFrame(df, columns=columns)
-                df_total = df_total.astype(np.float32)
-                psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
-                psi = pd.DataFrame(psi)
-                df_total.to_csv(
-                    "./python/experiments/expr/datasets/cat/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
-                psi.to_csv(
-                    "./python/experiments/expr/datasets/cat/psi/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
-
-# generate synthetic-continuous datasets
-for data in data_lst:
-    for n in n_lst:
-        for dim in dim_lst:
-            for i in range(20):
-                ds = load_dataset(data, uncer_quan_continuous, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
-                x = np.concatenate((ds.x_train, ds.x_test))
-                y = np.concatenate((ds.y_train, ds.y_test))
-                f = np.concatenate((ds.f_train, ds.f_test))
-                df = np.concatenate((f, y, x), axis=1)
-
-                columns = ["f", "y"]
-                for j in range(dim):
-                    columns.append("x" + str(j + 1))
-
-                df_total = pd.DataFrame(df, columns=columns)
-                df_total = df_total.astype(np.float32)
-                psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
-                psi = pd.DataFrame(psi)
-                df_total.to_csv(
-                    "./python/experiments/expr/datasets/cont/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
-                psi.to_csv(
-                    "./python/experiments/expr/datasets/cont/psi/{data}_n{n}_d{d}_i{i}.csv".format(data=data, n=n, d=dim, i=i))
-
-
-
-# generate adult, heart and mi datasets
-
-def gen_real_data(name):
+def generate_synthetic_data(folder):
+    # generate synthetic-mixture datasets
     for data in data_lst:
         for n in n_lst:
             for dim in dim_lst:
-                for i in range(20):
-                    ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
-                    x_train = np.concatenate(
-                        [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
-                        axis=1)
-                    x_test = np.concatenate(
-                        [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
-                        axis=1)
-                    x = np.concatenate((x_train, x_test))
-                    while np.sum(np.isnan(x)) > 0:
-                        ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
+                for i in range(3):
+                    if folder == 'cat':
+                        ds = load_dataset(data, uncer_quan, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
                         x_train = np.concatenate(
-                            [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]],
-                            ds.x_train[:, 7:]], axis=1)
+                            [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
+                            axis=1)
                         x_test = np.concatenate(
                             [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
                             axis=1)
                         x = np.concatenate((x_train, x_test))
-                    # x = np.concatenate((ds.x_train, ds.x_test))
+                    elif folder == 'cont':
+                        ds = load_dataset(data, uncer_quan_continuous, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
+                        x = np.concatenate((ds.x_train, ds.x_test))
+                    else:
+                        ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
+                        x_train = np.concatenate(
+                            [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
+                            axis=1)
+                        x_test = np.concatenate(
+                            [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
+                            axis=1)
+                        x = np.concatenate((x_train, x_test))
+                        while np.sum(np.isnan(x)) > 0:
+                            ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
+                            x_train = np.concatenate(
+                                [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]],
+                                ds.x_train[:, 7:]], axis=1)
+                            x_test = np.concatenate(
+                                [ds.x_test_cat[:, [0, 1]], ds.x_test[:, [2, 3, 4]], ds.x_test_cat[:, [2, 3]], ds.x_test[:, 7:]],
+                                axis=1)
+                            x = np.concatenate((x_train, x_test))
+                    
                     y = np.concatenate((ds.y_train, ds.y_test))
                     f = np.concatenate((ds.f_train, ds.f_test))
                     df = np.concatenate((f, y, x), axis=1)
-
+                    
                     columns = ["f", "y"]
                     for j in range(dim):
                         columns.append("x" + str(j + 1))
 
                     df_total = pd.DataFrame(df, columns=columns)
                     df_total = df_total.astype(np.float32)
-                    # psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
-                    # psi = pd.DataFrame(psi)
-                    print(df_total.isnull().values.any())
+                    #psi = np.concatenate((ds.psi_train.reshape(1, -1), ds.psi_test.reshape(1, -1)))
+                    #psi = pd.DataFrame(psi)
                     df_total.to_csv(
-                        "./python/experiments/expr/datasets/{name}/{data}_n{n}_d{d}_i{i}.csv".format(name=name,
-                            data=data, n=n, d=dim, i=i))
+                        "./python/experiments/expr/datasets/{folder}/{data}_n{n}_d{d}_i{i}.csv".format(folder=folder, data=data, n=n, d=dim, i=i))
+                    #psi.to_csv(
+                    #    "./python/experiments/expr/datasets/{folder}/psi/{data}_n{n}_d{d}_i{i}.csv".format(folder=folder, data=data, n=n, d=dim, i=i))
+
+
+generate_synthetic_data('cat')
+generate_synthetic_data('cont')
+exit()
 
 # adult dataset
 features = ["age", "workclass", "fnlwgt", "education", "education_num", "marital_status",
@@ -475,7 +440,7 @@ data_lst = ["linear", "rbf", "matern32", "complex"]
 n_lst = [100, 200, 500, 1000]
 dim_lst = [25, 50, 100, 200]
 base_data = feature_mat.to_numpy()
-gen_real_data("adult")
+
 
 # heart disease data
 features = ["age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach",
@@ -503,7 +468,7 @@ n_lst = [50, 100, 150, 257]
 dim_lst = [25, 50, 100, 200]
 base_data = feature_mat.to_numpy()
 
-gen_real_data("heart")
+
 
 # impute missingness
 from sklearn.experimental import enable_iterative_imputer
@@ -541,5 +506,3 @@ ax = sn.heatmap(corrMat, annot=True, cmap='rocket_r', annot_kws={'size':7})
 ax.add_patch(Rectangle((0,0), 5, 5, fill=False, edgecolor='k', lw=3, clip_on=False))
 plt.tight_layout()
 plt.show()
-
-# gen_real_data("mi")
