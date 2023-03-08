@@ -192,13 +192,8 @@ class Toy(Dataset):
             self.f = self.f_orig
             self.standardized = False
 
-
-def gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise):
+def gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise, r_mat):
     
-    # rotate x_all
-    r_mat = special_ortho_group.rvs(dim_in)
-    x_all = np.matmul(x_all, r_mat) 
-
     x_train = x_all[:n_train, :]
     x_test = x_all[n_train:, :]
 
@@ -238,30 +233,33 @@ def gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_nois
                       np.sin(0.5 * x[:, 2]) * (1 + np.exp(x[:, 3] - 0.5 * x[:, 2])) + x[:, 2] ** 2 + \
                       2 * np.sin(x[:, 3]) + 4 * x[:, 4]
     
-    return Toy(f, x_train, x_test, noise_sig2, snr, l, seed_noise)
+    
+    y_f = lambda x: f(np.matmul(x, r_mat))
 
-def uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None):
+    return Toy(y_f, x_train, x_test, noise_sig2, snr, l, seed_noise)
+
+def uncer_quan(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None, r_mat = None):
     # sample x
     r_x = np.random.RandomState(seed_x)
     n_all = n_train + n_test
     x_all = r_x.uniform(-2, 2, (n_all, dim_in))
     x_all[:, [0, 1, 5, 6]] = r_x.binomial(1, 0.5, size=n_all * 4).reshape((n_all, 4))
 
-    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise)
+    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise, r_mat = r_mat)
 
 
 ## continuous data
-def uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None):
+def uncer_quan_continuous(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None, r_mat = None):
     # sample x
     r_x = np.random.RandomState(seed_x)
     n_all = n_train + n_test
     x_all = r_x.uniform(-2, 2, (n_all, dim_in))
 
-    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise)
+    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise, r_mat = r_mat)
 
 
 # simulation using features from real datasets
-def simu_real(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None):
+def simu_real(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noise=0, version=1, base_data = None, r_mat = None):
     # sample x
     assert base_data is not None
     dim_original = base_data.shape[1]
@@ -271,31 +269,31 @@ def simu_real(dim_in, noise_sig2, snr, l, n_train, n_test=40, seed_x=0, seed_noi
     x_rest = r_x.uniform(-2, 2, (n_all, dim_in - dim_original))
     x_all = np.concatenate((x_original, x_rest), axis=1)
 
-    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise)
+    return gen_y(x_all, n_train, dim_in, seed_x, noise_sig2, version, snr, l, seed_noise, r_mat = r_mat)
 
 
-def load_dataset(name, type, dim_in, noise_sig2, snr, l, n_train, n_test=40, seed=0, base_data = None):
+def load_dataset(name, type, dim_in, noise_sig2, snr, l, n_train, n_test=40, seed=0, base_data = None, r_mat = None):
     '''
     inputs:
 
     returns:
     '''
-
+    
     if name == 'linear':
         dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=1, base_data = base_data)
+                             version=1, base_data = base_data, r_mat = r_mat)
 
     elif name == 'rbf':
         dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=2, base_data = base_data)
+                             version=2, base_data = base_data, r_mat = r_mat)
 
     elif name == 'matern32':
         dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=3, base_data = base_data)
+                             version=3, base_data = base_data, r_mat = r_mat)
 
     elif name == 'complex':
         dataset = type(dim_in, noise_sig2, snr, l, n_train, n_test=n_test, seed_x=seed, seed_noise=seed,
-                             version=4, base_data = base_data)
+                             version=4, base_data = base_data, r_mat = r_mat)
 
     return dataset
 
@@ -313,8 +311,9 @@ def generate_synthetic_data(folder):
         for n in n_lst:
             for dim in dim_lst:
                 for i in range(3):
+                    r_mat = special_ortho_group.rvs(dim)
                     if folder == 'cat':
-                        ds = load_dataset(data, uncer_quan, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
+                        ds = load_dataset(data, uncer_quan, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, r_mat=r_mat)
                         x_train = np.concatenate(
                             [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
                             axis=1)
@@ -323,10 +322,10 @@ def generate_synthetic_data(folder):
                             axis=1)
                         x = np.concatenate((x_train, x_test))
                     elif folder == 'cont':
-                        ds = load_dataset(data, uncer_quan_continuous, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i)
+                        ds = load_dataset(data, uncer_quan_continuous, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, r_mat=r_mat)
                         x = np.concatenate((ds.x_train, ds.x_test))
                     else:
-                        ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
+                        ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data, r_mat=r_mat)
                         x_train = np.concatenate(
                             [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]], ds.x_train[:, 7:]],
                             axis=1)
@@ -335,7 +334,7 @@ def generate_synthetic_data(folder):
                             axis=1)
                         x = np.concatenate((x_train, x_test))
                         while np.sum(np.isnan(x)) > 0:
-                            ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data)
+                            ds = load_dataset(data, simu_real, dim_in=dim, noise_sig2=.01, snr=2, l=1, n_train=n, seed=i, base_data = base_data, r_mat=r_mat)
                             x_train = np.concatenate(
                                 [ds.x_train_cat[:, [0, 1]], ds.x_train[:, [2, 3, 4]], ds.x_train_cat[:, [2, 3]],
                                 ds.x_train[:, 7:]], axis=1)
@@ -361,10 +360,6 @@ def generate_synthetic_data(folder):
                     #psi.to_csv(
                     #    "./python/experiments/expr/datasets/{folder}/psi/{data}_n{n}_d{d}_i{i}.csv".format(folder=folder, data=data, n=n, d=dim, i=i))
 
-
-generate_synthetic_data('cat')
-generate_synthetic_data('cont')
-exit()
 
 # adult dataset
 features = ["age", "workclass", "fnlwgt", "education", "education_num", "marital_status",
@@ -436,11 +431,12 @@ ax.add_patch(Rectangle((0,0), 5, 5, fill=False, edgecolor='k', lw=3, clip_on=Fal
 plt.tight_layout()
 plt.show()
 
-data_lst = ["linear", "rbf", "matern32", "complex"]
-n_lst = [100, 200, 500, 1000]
-dim_lst = [25, 50, 100, 200]
+#n_lst = [100, 200, 500, 1000]
+#dim_lst = [25, 50, 100, 200]
 base_data = feature_mat.to_numpy()
 
+generate_synthetic_data("adult")
+exit()
 
 # heart disease data
 features = ["age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach",
